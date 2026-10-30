@@ -1,0 +1,23 @@
+import {NextRequest,NextResponse} from 'next/server';
+import {put,list,get,del} from '@vercel/blob';
+import {randomUUID} from 'node:crypto';
+import {authorized} from '../../../lib/auth';
+export const runtime='nodejs';
+export const dynamic='force-dynamic';
+const fields=['shopName','kind','address','workingHours','holidayHours','revenueRatio','peakHours','fulltimeContracts','specialRequirements','ownerPresence','ownerNotes'];
+export async function POST(req:NextRequest){
+ if(req.headers.get('origin')!==req.nextUrl.origin)return NextResponse.json({error:'Yêu cầu không hợp lệ.'},{status:403});
+ if(!process.env.BLOB_READ_WRITE_TOKEN)return NextResponse.json({error:'Chưa kết nối kho lưu trữ. Vui lòng liên hệ người phụ trách.'},{status:503});
+ let attachment:string|undefined;
+ try{if(Number(req.headers.get('content-length')||0)>3600000)throw Error('Phiếu quá lớn. Bảng lương tối đa 3 MB.');const form=await req.formData();const data:Record<string,unknown>={};for(const key of fields){const value=form.get(key);if(typeof value!=='string'||value.length>4000)throw Error('Thông tin không hợp lệ.');data[key]=value.trim()}
+ for(const key of ['shopName','address','workingHours','holidayHours','revenueRatio','peakHours','fulltimeContracts','ownerPresence'])if(!data[key])throw Error('Vui lòng điền đủ các mục bắt buộc.');
+ if(!['restaurant','nail','other'].includes(data.kind as string))throw Error('Loại hình không hợp lệ.');
+ const kindOther=form.get('kindOther');if(data.kind==='other'){if(typeof kindOther!=='string'||!kindOther.trim()||kindOther.length>200)throw Error('Vui lòng nhập loại hình cụ thể (tối đa 200 ký tự).');data.kindOther=kindOther.trim()}
+ const days=form.getAll('busyDays');if(!days.length||days.some(d=>!['Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7','Chủ nhật'].includes(String(d))))throw Error('Chọn ít nhất một ngày tiệm đông khách.');data.busyDays=days;
+ const staff=JSON.parse(String(form.get('staff')));if(!Array.isArray(staff)||staff.length<1||staff.length>100)throw Error('Danh sách nhân viên không hợp lệ.');
+ data.staff=staff.map(s=>{if(typeof s.name!=='string'||!s.name.trim()||s.name.length>150||typeof s.role!=='string'||s.role.length>100||(data.kind!=='nail'&&!s.role.trim())||!['tuần','tháng'].includes(s.period)||!Number.isFinite(Number(s.hours))||Number(s.hours)<0.5||Number(s.hours)>(s.period==='tuần'?168:744))throw Error('Kiểm tra tên, vị trí và số giờ của từng nhân viên.');return {name:s.name.trim(),role:data.kind==='nail'?'':s.role.trim(),hours:Number(s.hours),period:s.period}});
+ const id=randomUUID();const file=form.get('payroll');if(file instanceof File&&file.size){if(file.size>3*1024*1024||!['application/pdf','image/jpeg','image/png'].includes(file.type))throw Error('Bảng lương cần là PDF, JPG hoặc PNG, tối đa 3 MB.');const bytes=Buffer.from(await file.arrayBuffer());const valid=file.type==='application/pdf'?bytes.subarray(0,5).toString()==='%PDF-':file.type==='image/png'?bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])):bytes[0]===255&&bytes[1]===216&&bytes[2]===255;if(!valid)throw Error('Nội dung tệp không khớp định dạng.');attachment=`payroll/${id}.${file.type==='application/pdf'?'pdf':file.type==='image/png'?'png':'jpg'}`;await put(attachment,bytes,{access:'private',contentType:file.type,addRandomSuffix:false});data.payroll=attachment;}
+ await put(`surveys/${id}.json`,JSON.stringify({...data,id,createdAt:new Date().toISOString()}),{access:'private',contentType:'application/json',addRandomSuffix:false});return NextResponse.json({ok:true,id});
+ }catch(e){if(attachment)await del(attachment).catch(()=>{});const message=(e as Error).message;const known=/^(Phiếu|Thông tin|Vui lòng|Loại hình|Chọn|Danh sách|Kiểm tra|Bảng lương|Nội dung)/.test(message);return NextResponse.json({error:known?message:'Không lưu được phiếu. Vui lòng thử lại.'},{status:known?400:500})}
+}
+export async function GET(req:NextRequest){if(!await authorized())return NextResponse.json({error:'Vui lòng đăng nhập.'},{status:401});try{const page=await list({prefix:'surveys/',limit:30,cursor:req.nextUrl.searchParams.get('cursor')||undefined});const surveys=await Promise.all(page.blobs.map(async blob=>{const result=await get(blob.pathname,{access:'private',useCache:false});if(!result||result.statusCode!==200)throw Error('Không đọc được phiếu.');return JSON.parse(await new Response(result.stream).text())}));return NextResponse.json({surveys,cursor:page.hasMore?page.cursor:null},{headers:{'Cache-Control':'no-store'}})}catch{return NextResponse.json({error:'Không đọc được kho lưu trữ. Kiểm tra kết nối Vercel Blob.'},{status:503})}}

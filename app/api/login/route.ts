@@ -1,0 +1,4 @@
+import {NextRequest,NextResponse} from 'next/server';
+import {equal,session} from '../../../lib/auth';
+export async function POST(req:NextRequest){if(req.headers.get('origin')!==req.nextUrl.origin)return NextResponse.json({error:'Yêu cầu không hợp lệ'},{status:403});if(!process.env.ADMIN_PASSWORD)return NextResponse.json({error:'Chưa cấu hình mật khẩu quản lý.'},{status:503});const data=await req.json().catch(()=>null);if(!data||typeof data.password!=='string'||!equal(data.password,process.env.ADMIN_PASSWORD))return NextResponse.json({error:'Mật khẩu không đúng.'},{status:401});const res=NextResponse.json({ok:true});res.cookies.set('survey_admin',session(),{httpOnly:true,secure:process.env.NODE_ENV==='production',sameSite:'strict',path:'/',maxAge:28800});return res}
+export async function DELETE(){const res=NextResponse.json({ok:true});res.cookies.set('survey_admin','',{path:'/',maxAge:0});return res}
