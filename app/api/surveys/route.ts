@@ -1,7 +1,6 @@
 import {NextRequest,NextResponse} from 'next/server';
 import {put,list,get,del} from '@vercel/blob';
 import {randomUUID} from 'node:crypto';
-import {authorized} from '../../../lib/auth';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
 const fields=['shopName','kind','address','workingHours','holidayHours','revenueRatio','peakHours','fulltimeContracts','specialRequirements','ownerPresence','ownerNotes'];
@@ -20,4 +19,4 @@ export async function POST(req:NextRequest){
  await put(`surveys/${id}.json`,JSON.stringify({...data,id,createdAt:new Date().toISOString()}),{access:'private',contentType:'application/json',addRandomSuffix:false});return NextResponse.json({ok:true,id});
  }catch(e){if(attachment)await del(attachment).catch(()=>{});const message=(e as Error).message;const known=/^(Phiếu|Thông tin|Vui lòng|Loại hình|Chọn|Danh sách|Kiểm tra|Bảng lương|Nội dung)/.test(message);return NextResponse.json({error:known?message:'Không lưu được phiếu. Vui lòng thử lại.'},{status:known?400:500})}
 }
-export async function GET(req:NextRequest){if(!await authorized())return NextResponse.json({error:'Vui lòng đăng nhập.'},{status:401});try{const page=await list({prefix:'surveys/',limit:30,cursor:req.nextUrl.searchParams.get('cursor')||undefined});const surveys=await Promise.all(page.blobs.map(async blob=>{const result=await get(blob.pathname,{access:'private',useCache:false});if(!result||result.statusCode!==200)throw Error('Không đọc được phiếu.');return JSON.parse(await new Response(result.stream).text())}));return NextResponse.json({surveys,cursor:page.hasMore?page.cursor:null},{headers:{'Cache-Control':'no-store'}})}catch{return NextResponse.json({error:'Không đọc được kho lưu trữ. Kiểm tra kết nối Vercel Blob.'},{status:503})}}
+export async function GET(req:NextRequest){try{const page=await list({prefix:'surveys/',limit:30,cursor:req.nextUrl.searchParams.get('cursor')||undefined});const surveys=await Promise.all(page.blobs.map(async blob=>{const result=await get(blob.pathname,{access:'private',useCache:false});if(!result||result.statusCode!==200)throw Error('Không đọc được phiếu.');return JSON.parse(await new Response(result.stream).text())}));return NextResponse.json({surveys,cursor:page.hasMore?page.cursor:null},{headers:{'Cache-Control':'no-store'}})}catch{return NextResponse.json({error:'Không đọc được kho lưu trữ. Kiểm tra kết nối Vercel Blob.'},{status:503})}}
